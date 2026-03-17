@@ -6,11 +6,15 @@ const { COOKIE_NAME } = require('./middleware');
 const router = express.Router();
 
 const OAUTH_SCOPES = [
-  'crm.objects.contacts.write',
   'crm.objects.contacts.read',
-  'crm.schemas.custom.read',
+  'crm.objects.contacts.write',
   'crm.objects.custom.read',
   'crm.objects.custom.write',
+  'crm.schemas.contacts.read',
+  'crm.schemas.contacts.write',
+  'crm.schemas.companies.read',
+  'crm.schemas.companies.write',
+  'crm.schemas.custom.read',
   'oauth',
 ].join(' ');
 
