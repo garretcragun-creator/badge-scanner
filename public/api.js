@@ -49,6 +49,13 @@ export async function runOCR(imageBase64, mediaType) {
   });
 }
 
+export async function enrichContact({ firstname, lastname, company }) {
+  return apiCall('/api/enrich', {
+    method: 'POST',
+    body: JSON.stringify({ firstname, lastname, company }),
+  });
+}
+
 export async function submitScan({ firstname, lastname, email, company, jobtitle, notes }) {
   return apiCall('/api/submit-scan', {
     method: 'POST',

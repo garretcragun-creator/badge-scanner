@@ -15,6 +15,7 @@ const OAUTH_SCOPES = [
   'crm.schemas.companies.read',
   'crm.schemas.companies.write',
   'crm.schemas.custom.read',
+  'scheduler.meeting-links.read',
   'oauth',
 ].join(' ');
 
@@ -78,6 +79,28 @@ router.get('/callback', async (req, res) => {
       console.warn('Could not fetch owner:', e.message);
     }
 
+    // Fetch user's default meeting link from HubSpot scheduling pages
+    let meetingLink = '';
+    if (ownerId) {
+      try {
+        const meetingsRes = await fetch(
+          'https://api.hubapi.com/scheduler/v3/meetings/meeting-links?' + new URLSearchParams({ ownerId, count: 1 }),
+          { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+        );
+        if (meetingsRes.ok) {
+          const meetingsData = await meetingsRes.json();
+          const links = meetingsData.results || meetingsData;
+          if (Array.isArray(links) && links.length > 0) {
+            meetingLink = links[0].link || links[0].slug
+              ? `https://meetings.hubspot.com/${links[0].slug}`
+              : '';
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch meeting links:', e.message);
+      }
+    }
+
     // Create server-side session (tokens never sent to client)
     const sessionId = createSession({
       accessToken: tokens.access_token,
@@ -86,6 +109,7 @@ router.get('/callback', async (req, res) => {
       ownerName,
       ownerEmail,
       hubspotOwnerId: ownerId,
+      meetingLink,
     });
 
     // Set HttpOnly cookie and redirect

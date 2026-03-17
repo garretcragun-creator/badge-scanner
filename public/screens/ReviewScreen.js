@@ -4,10 +4,9 @@ import { PrimaryBtn, SecondaryBtn } from '../components/Buttons.js';
 import { Field } from '../components/Field.js';
 import { ErrorBanner } from '../components/ErrorBanner.js';
 import { LoadingSpinner } from '../components/LoadingSpinner.js';
-
 const { createElement: h, useRef, useState } = React;
 
-export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes, ocrLoading, error, onSubmit, onRescan, submitting }) {
+export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes, ocrLoading, error, onSubmit, onRescan, submitting, enrichStatus }) {
   const recognitionRef = useRef(null);
   const [isListening, setIsListening] = useState(false);
 
@@ -87,6 +86,20 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
               h(Field, { label: 'Last Name', value: ocrData.lastname, onChange: updateField('lastname'), placeholder: 'Doe' }),
             ),
             h(Field, { label: 'Email', value: ocrData.email, onChange: updateField('email'), placeholder: 'jane@company.com', mono: true }),
+
+            // Apollo enrichment status
+            enrichStatus ? h('div', {
+              style: {
+                marginTop: -12, marginBottom: 16, fontSize: 11, fontWeight: 500,
+                color: enrichStatus === 'searching' ? c.textMuted
+                  : enrichStatus === 'found' ? c.accent
+                  : c.textMuted,
+              },
+            }, enrichStatus === 'searching' ? 'Looking up email via Apollo...'
+              : enrichStatus === 'found' ? 'Email enriched via Apollo'
+              : enrichStatus === 'not_found' ? 'No email found in Apollo'
+              : null,
+            ) : null,
             h(Field, { label: 'Company', value: ocrData.company, onChange: updateField('company'), placeholder: 'Acme Inc' }),
             h(Field, { label: 'Job Title', value: ocrData.jobtitle, onChange: updateField('jobtitle'), placeholder: 'VP of Marketing' }),
 

@@ -11,6 +11,7 @@ const { requireAuth } = require('./server/middleware');
 const { updateSession } = require('./server/session');
 const { upsertContact, createNote } = require('./server/hubspot');
 const hapily = require('./server/hapily');
+const { enrichContact } = require('./server/apollo');
 
 const app = express();
 
@@ -33,11 +34,24 @@ app.get('/api/me', requireAuth, (req, res) => {
     email: req.session.ownerEmail,
     hubspotOwnerId: req.session.hubspotOwnerId,
     selectedEvent: req.session.selectedEvent || null,
+    meetingLink: req.session.meetingLink || '',
   });
 });
 
 // ─── API: OCR ─────────────────────────────────────────────────────
 app.use('/api/ocr', ocrRoutes);
+
+// ─── API: Apollo enrichment (find email from name/company) ─────────
+app.post('/api/enrich', requireAuth, async (req, res) => {
+  const { firstname, lastname, company } = req.body;
+  try {
+    const result = await enrichContact({ firstname, lastname, company });
+    res.json(result);
+  } catch (err) {
+    console.error('Enrich error:', err);
+    res.status(500).json({ enriched: false, reason: 'Enrichment failed' });
+  }
+});
 
 // ─── API: Fetch Hapily events for lead capture ────────────────────
 app.get('/api/events', requireAuth, async (req, res) => {
@@ -126,8 +140,8 @@ app.post('/api/submit-scan', requireAuth, async (req, res) => {
       console.warn('Registrant creation failed:', e.message);
     }
 
-    // Step 4: Determine meeting link (event-level overrides global)
-    const meetingUrl = selectedEvent.meetingLink || MEETING_LINK || '';
+    // Step 4: Determine meeting link (user's default > event-level > global)
+    const meetingUrl = req.session.meetingLink || selectedEvent.meetingLink || MEETING_LINK || '';
 
     // Add to scan history in session
     const scanEntry = {

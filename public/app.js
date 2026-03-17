@@ -27,6 +27,7 @@ function App() {
   const [error, setError] = useState(null);
   const [scanHistory, setScanHistory] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [enrichStatus, setEnrichStatus] = useState(null);
 
   // Check auth on mount
   useEffect(() => {
@@ -97,22 +98,50 @@ function App() {
     setScreen(SCREENS.REVIEW);
     setError(null);
     setOcrLoading(true);
+    setEnrichStatus(null);
     try {
       const base64 = imageDataUrl.split(',')[1];
       const mediaType = (imageDataUrl.match(/data:(.*?);/) || [])[1] || 'image/jpeg';
       const fields = await api.runOCR(base64, mediaType);
-      setOcrData({
+      const ocrResult = {
         firstname: fields.firstname || '',
         lastname: fields.lastname || '',
         email: fields.email || '',
         company: fields.company || '',
         jobtitle: fields.jobtitle || '',
-      });
+      };
+      setOcrData(ocrResult);
+      setOcrLoading(false);
+
+      // Auto-enrich via Apollo if no email found
+      if (!ocrResult.email && (ocrResult.firstname || ocrResult.lastname)) {
+        setEnrichStatus('searching');
+        try {
+          const enriched = await api.enrichContact({
+            firstname: ocrResult.firstname,
+            lastname: ocrResult.lastname,
+            company: ocrResult.company,
+          });
+          if (enriched.enriched && enriched.email) {
+            setOcrData(prev => ({
+              ...prev,
+              email: enriched.email,
+              company: enriched.company || prev.company,
+              jobtitle: enriched.jobtitle || prev.jobtitle,
+            }));
+            setEnrichStatus('found');
+          } else {
+            setEnrichStatus('not_found');
+          }
+        } catch (e) {
+          setEnrichStatus('not_found');
+        }
+      }
     } catch (err) {
       console.error('OCR error:', err);
       setError('OCR extraction failed \u2014 please fill in the fields manually.');
+      setOcrLoading(false);
     }
-    setOcrLoading(false);
   };
 
   const handleManualEntry = () => {
@@ -177,6 +206,7 @@ function App() {
     setNotes('');
     setError(null);
     setResult(null);
+    setEnrichStatus(null);
     setScreen(SCREENS.SCAN);
   };
 
@@ -230,7 +260,7 @@ function App() {
       return h(ReviewScreen, {
         user, photo, ocrData, setOcrData, notes, setNotes,
         ocrLoading, error, onSubmit: handleSubmit, onRescan: resetForNextScan,
-        submitting,
+        submitting, enrichStatus,
       });
 
     case SCREENS.PROCESSING:
