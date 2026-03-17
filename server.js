@@ -173,7 +173,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`Badge Scanner running on port ${PORT}`);
   if (BASE_URL) console.log(`OAuth redirect: ${BASE_URL}/auth/callback`);
 });
