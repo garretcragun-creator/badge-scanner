@@ -8,6 +8,9 @@ const router = express.Router();
 const OAUTH_SCOPES = [
   'crm.objects.contacts.read',
   'crm.objects.contacts.write',
+  'crm.objects.companies.read',
+  'crm.objects.companies.write',
+  'crm.objects.owners.read',
   'crm.objects.custom.read',
   'crm.objects.custom.write',
   'crm.schemas.contacts.read',
@@ -78,37 +81,8 @@ router.get('/callback', async (req, res) => {
       console.warn('Could not fetch owner:', e.message);
     }
 
-    // Fetch user's default meeting link from HubSpot scheduling pages
-    let meetingLink = '';
-    if (ownerId) {
-      try {
-        // Try the scheduling pages API
-        const meetingsRes = await fetch(
-          'https://api.hubapi.com/scheduler/v3/meetings/meeting-links?' + new URLSearchParams({ ownerId, count: 1 }),
-          { headers: { Authorization: `Bearer ${tokens.access_token}` } }
-        );
-        if (meetingsRes.ok) {
-          const meetingsData = await meetingsRes.json();
-          console.log('Meeting links response:', JSON.stringify(meetingsData).slice(0, 500));
-          const links = meetingsData.results || meetingsData;
-          if (Array.isArray(links) && links.length > 0) {
-            const first = links[0];
-            meetingLink = first.link || first.url || '';
-            if (!meetingLink && first.slug) {
-              meetingLink = `https://meetings.hubspot.com/${first.slug}`;
-            }
-          }
-        } else {
-          const errBody = await meetingsRes.text();
-          console.warn('Meeting links API returned', meetingsRes.status, errBody.slice(0, 300));
-        }
-      } catch (e) {
-        console.warn('Could not fetch meeting links:', e.message);
-      }
-    }
-    console.log('User meeting link:', meetingLink || '(none - will use MEETING_LINK env var)');
-
     // Create server-side session (tokens never sent to client)
+    // Meeting link will be set by the user via /api/set-meeting-link
     const sessionId = createSession({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
@@ -116,7 +90,7 @@ router.get('/callback', async (req, res) => {
       ownerName,
       ownerEmail,
       hubspotOwnerId: ownerId,
-      meetingLink,
+      meetingLink: '',
     });
 
     // Set HttpOnly cookie and redirect

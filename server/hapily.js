@@ -30,7 +30,7 @@ async function discoverHapilyObjects(accessToken) {
     console.warn('Available schemas:', results.map(s => `${s.name} (${s.objectTypeId})`).join(', '));
   }
 
-  // Discover association types
+  // Discover association type IDs
   let registrantToContactAssocType = null;
   let registrantToEventAssocType = null;
 
@@ -65,7 +65,7 @@ async function discoverHapilyObjects(accessToken) {
     registrantToEventAssocType,
   };
 
-  console.log('Hapily objects discovered:', hapilyCache);
+  console.log('Hapily objects discovered:', JSON.stringify(hapilyCache, null, 2));
   return hapilyCache;
 }
 
@@ -113,8 +113,10 @@ async function getLeadCaptureEvents(accessToken) {
 }
 
 // Create a Hapily registrant linked to a contact and event
+// Strategy: try creating with inline associations first.
+// If that fails, create without associations then add them via v4 API.
 async function createRegistrant(accessToken, { contactId, eventId, eventName, firstname, lastname, email, company, jobtitle }) {
-  const { registrantTypeId, registrantToContactAssocType, registrantToEventAssocType } = await discoverHapilyObjects(accessToken);
+  const { registrantTypeId, registrantToContactAssocType, registrantToEventAssocType, eventTypeId } = await discoverHapilyObjects(accessToken);
 
   if (!registrantTypeId) {
     console.warn('Hapily Registrant object not found — skipping registrant creation');
@@ -152,12 +154,58 @@ async function createRegistrant(accessToken, { contactId, eventId, eventName, fi
     });
   }
 
+  // Attempt 1: Create with inline associations
   try {
     const registrant = await hubspot.createCustomObject(accessToken, registrantTypeId, properties, associations);
+    console.log('Registrant created with inline associations:', registrant.id);
     return { registrantId: registrant.id };
   } catch (err) {
-    console.error('Registrant creation failed:', err.message, err.data);
-    return { skipped: true, reason: err.message };
+    console.warn('Inline association create failed:', err.message);
+    // Don't give up — try create-then-associate
+  }
+
+  // Attempt 2: Create registrant without associations, then associate via v4 API
+  try {
+    const registrant = await hubspot.createCustomObject(accessToken, registrantTypeId, properties, []);
+    const registrantId = registrant.id;
+    console.log('Registrant created (no inline assocs):', registrantId);
+
+    const assocResults = [];
+
+    // Associate registrant → contact via v4
+    if (contactId && registrantToContactAssocType) {
+      const ok = await hubspot.createAssociation(
+        accessToken, registrantTypeId, registrantId, '0-1', contactId,
+        'USER_DEFINED', registrantToContactAssocType
+      );
+      assocResults.push({ target: 'contact', ok });
+    }
+
+    // Associate registrant → event via v4
+    if (eventId && registrantToEventAssocType && eventTypeId) {
+      const ok = await hubspot.createAssociation(
+        accessToken, registrantTypeId, registrantId, eventTypeId, eventId,
+        'USER_DEFINED', registrantToEventAssocType
+      );
+      assocResults.push({ target: 'event', ok });
+    }
+
+    const failed = assocResults.filter(r => !r.ok);
+    if (failed.length > 0) {
+      console.warn('Some associations failed:', failed.map(f => f.target).join(', '));
+    }
+    console.log('Association results:', JSON.stringify(assocResults));
+
+    return { registrantId };
+  } catch (err2) {
+    console.error('Registrant creation fully failed:', err2.message, JSON.stringify(err2.data, null, 2));
+
+    // Last resort: clear cache in case type IDs are stale
+    if (hapilyCache) {
+      clearCache();
+    }
+
+    return { skipped: true, reason: err2.message };
   }
 }
 

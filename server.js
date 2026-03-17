@@ -9,7 +9,7 @@ const authRoutes = require('./server/auth');
 const ocrRoutes = require('./server/ocr');
 const { requireAuth } = require('./server/middleware');
 const { updateSession } = require('./server/session');
-const { upsertContact, createNote } = require('./server/hubspot');
+const { upsertContact, createNote, upsertCompany, associateContactWithCompany } = require('./server/hubspot');
 const hapily = require('./server/hapily');
 const { enrichContact } = require('./server/apollo');
 
@@ -20,7 +20,13 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.use(express.json({ limit: '10mb' })); // Large limit for base64 images
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  maxAge: 0,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  },
+}));
 
 const { MEETING_LINK, PORT = 3000, BASE_URL } = process.env;
 
@@ -71,6 +77,13 @@ app.get('/api/events', requireAuth, async (req, res) => {
   }
 });
 
+// ─── API: Save user's meeting link ────────────────────────────────
+app.post('/api/set-meeting-link', requireAuth, (req, res) => {
+  const { meetingLink } = req.body;
+  updateSession(req.sessionId, { meetingLink: meetingLink || '' });
+  res.json({ ok: true });
+});
+
 // ─── API: Select an event to scan for ─────────────────────────────
 app.post('/api/select-event', requireAuth, (req, res) => {
   const { eventId, eventName, meetingLink } = req.body;
@@ -85,7 +98,7 @@ app.post('/api/select-event', requireAuth, (req, res) => {
 
 // ─── API: Submit a badge scan ─────────────────────────────────────
 app.post('/api/submit-scan', requireAuth, async (req, res) => {
-  const { firstname, lastname, email, company, jobtitle, notes } = req.body;
+  const { firstname, lastname, email, company, jobtitle, notes, leadType, warmth } = req.body;
   const { accessToken, hubspotOwnerId, selectedEvent, ownerEmail, ownerName } = req.session;
 
   if (!selectedEvent) {
@@ -106,20 +119,50 @@ app.post('/api/submit-scan', requireAuth, async (req, res) => {
     if (hubspotOwnerId) {
       contactProperties.hubspot_owner_id = hubspotOwnerId;
     }
+    // Set lead status if warmth provided
+    if (warmth) {
+      contactProperties.hs_lead_status = warmth === 'Hot' ? 'OPEN' : warmth === 'Warm' ? 'IN_PROGRESS' : 'NEW';
+    }
+    // Set Hapily event lead capture trigger — tells Hapily to associate contact with event
+    if (selectedEvent.id) {
+      contactProperties.event_leadcapture_trigger = selectedEvent.id;
+    }
 
     const { contactId, updated } = await upsertContact(accessToken, contactProperties);
 
-    // Step 2: Create note (best-effort)
-    if (notes) {
+    // Step 2: Create/find company and associate with contact (best-effort)
+    let companyId = null;
+    if (company || email) {
       try {
-        await createNote(accessToken, contactId, notes);
+        const companyResult = await upsertCompany(accessToken, { companyName: company, email });
+        if (companyResult) {
+          companyId = companyResult.companyId;
+          await associateContactWithCompany(accessToken, contactId, companyId);
+        }
+      } catch (e) {
+        warnings.push('Company association failed');
+        console.warn('Company upsert/associate failed:', e.message);
+      }
+    }
+
+    // Step 3: Create note with qualification info (best-effort)
+    if (notes || leadType || warmth) {
+      try {
+        let noteBody = '';
+        const qualParts = [];
+        if (leadType) qualParts.push(`Lead Type: ${leadType}`);
+        if (warmth) qualParts.push(`Warmth: ${warmth}`);
+        if (qualParts.length > 0) noteBody += qualParts.join(' | ') + '\n\n';
+        if (notes) noteBody += notes;
+        noteBody = noteBody.trim();
+        if (noteBody) await createNote(accessToken, contactId, noteBody);
       } catch (e) {
         warnings.push('Note creation failed');
         console.warn('Note creation failed:', e.message);
       }
     }
 
-    // Step 3: Create Hapily registrant (best-effort)
+    // Step 4: Create Hapily registrant (best-effort)
     let registrantResult;
     try {
       registrantResult = await hapily.createRegistrant(accessToken, {
@@ -140,7 +183,7 @@ app.post('/api/submit-scan', requireAuth, async (req, res) => {
       console.warn('Registrant creation failed:', e.message);
     }
 
-    // Step 4: Determine meeting link (user's default > event-level > global)
+    // Step 5: Determine meeting link (user's default > event-level > global)
     const meetingUrl = req.session.meetingLink || selectedEvent.meetingLink || MEETING_LINK || '';
 
     // Add to scan history in session
@@ -153,6 +196,7 @@ app.post('/api/submit-scan', requireAuth, async (req, res) => {
       jobtitle,
       updated,
       registrantId: registrantResult?.registrantId || null,
+      companyId,
       timestamp: new Date().toISOString(),
     };
     req.session.scanHistory.push(scanEntry);
@@ -161,6 +205,7 @@ app.post('/api/submit-scan', requireAuth, async (req, res) => {
       contactId,
       updated,
       registrantId: registrantResult?.registrantId || null,
+      companyId,
       meetingUrl,
       warnings: warnings.length > 0 ? warnings : undefined,
     });

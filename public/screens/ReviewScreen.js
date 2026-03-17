@@ -6,30 +6,64 @@ import { ErrorBanner } from '../components/ErrorBanner.js';
 import { LoadingSpinner } from '../components/LoadingSpinner.js';
 const { createElement: h, useRef, useState } = React;
 
-export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes, ocrLoading, error, onSubmit, onRescan, submitting, enrichStatus }) {
+const LEAD_TYPE_OPTIONS = [
+  { value: 'Prospect', label: 'Prospect' },
+  { value: 'Customer', label: 'Customer' },
+  { value: 'Partner', label: 'Partner' },
+  { value: 'Vendor', label: 'Vendor' },
+  { value: 'Other', label: 'Other' },
+];
+
+const WARMTH_OPTIONS = [
+  { value: 'Hot', label: 'Hot' },
+  { value: 'Warm', label: 'Warm' },
+  { value: 'Cold', label: 'Cold' },
+];
+
+export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes, ocrLoading, error, onSubmit, onRescan, submitting, enrichStatus, leadType, setLeadType, warmth, setWarmth }) {
   const recognitionRef = useRef(null);
+  const preRecordingNotesRef = useRef('');
   const [isListening, setIsListening] = useState(false);
+  const [notesFocused, setNotesFocused] = useState(false);
 
   const hasSpeechAPI = typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
 
   const toggleVoice = () => {
     if (!hasSpeechAPI) return;
     if (isListening) {
-      recognitionRef.current && recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+      }
       setIsListening(false);
       return;
     }
+
+    // Capture notes content before recording starts
+    preRecordingNotesRef.current = notes;
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SR();
     recognition.continuous = true;
-    recognition.interimResults = true;
+    recognition.interimResults = false; // Only final results — prevents duplication and UI lag
     recognition.lang = 'en-US';
+
+    let finalTranscript = '';
+
     recognition.onresult = (e) => {
-      let t = '';
-      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      setNotes((prev) => (prev.endsWith(' ') || prev === '' ? prev : prev + ' ') + t);
+      // Only process new results (from resultIndex onward)
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          finalTranscript += e.results[i][0].transcript;
+        }
+      }
+      const base = preRecordingNotesRef.current;
+      setNotes((base ? base + ' ' : '') + finalTranscript.trim());
     };
-    recognition.onerror = () => setIsListening(false);
+
+    recognition.onerror = (e) => {
+      console.warn('Speech recognition error:', e.error);
+      setIsListening(false);
+    };
     recognition.onend = () => setIsListening(false);
     recognitionRef.current = recognition;
     recognition.start();
@@ -103,6 +137,18 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
             h(Field, { label: 'Company', value: ocrData.company, onChange: updateField('company'), placeholder: 'Acme Inc' }),
             h(Field, { label: 'Job Title', value: ocrData.jobtitle, onChange: updateField('jobtitle'), placeholder: 'VP of Marketing' }),
 
+            // Lead qualification (side by side)
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' } },
+              h(Field, {
+                label: 'Lead Type', value: leadType, onChange: setLeadType,
+                options: LEAD_TYPE_OPTIONS, placeholder: 'Select type...',
+              }),
+              h(Field, {
+                label: 'Warmth', value: warmth, onChange: setWarmth,
+                options: WARMTH_OPTIONS, placeholder: 'Select warmth...',
+              }),
+            ),
+
             // Notes section
             h('div', { style: { marginBottom: 20 } },
               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 } },
@@ -137,21 +183,16 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
                 onChange: (e) => setNotes(e.target.value),
                 placeholder: 'Add context, talking points, follow-up reminders...',
                 rows: 3,
-                onFocus: (e) => {
-                  e.target.style.borderColor = c.primary;
-                  e.target.style.boxShadow = '0 0 0 3px ' + c.inputFocus;
-                  e.target.style.background = 'rgba(255,255,255,0.07)';
-                },
-                onBlur: (e) => {
-                  e.target.style.borderColor = c.inputBorder;
-                  e.target.style.boxShadow = 'none';
-                  e.target.style.background = c.inputBg;
-                },
+                onFocus: () => setNotesFocused(true),
+                onBlur: () => setNotesFocused(false),
                 style: {
-                  width: '100%', background: c.inputBg, border: '1px solid ' + c.inputBorder,
+                  width: '100%',
+                  background: notesFocused ? 'rgba(255,255,255,0.07)' : c.inputBg,
+                  border: '1px solid ' + (notesFocused ? c.primary : c.inputBorder),
                   borderRadius: 12, padding: '13px 16px', color: c.text, fontSize: 14,
                   fontFamily: font, outline: 'none', resize: 'vertical', boxSizing: 'border-box',
                   lineHeight: 1.7, transition: 'all 0.25s ease',
+                  boxShadow: notesFocused ? '0 0 0 3px ' + c.inputFocus : 'none',
                 },
               }),
             ),

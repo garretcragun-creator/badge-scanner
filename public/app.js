@@ -1,6 +1,7 @@
 import * as api from './api.js';
 import * as store from './session.js';
 import { LoginScreen } from './screens/LoginScreen.js';
+import { MeetingLinkScreen } from './screens/MeetingLinkScreen.js';
 import { EventSelectScreen } from './screens/EventSelectScreen.js';
 import { ScanScreen } from './screens/ScanScreen.js';
 import { ReviewScreen } from './screens/ReviewScreen.js';
@@ -9,7 +10,7 @@ import { DoneScreen } from './screens/DoneScreen.js';
 
 const { createElement: h, useState, useEffect } = React;
 
-const SCREENS = { LOGIN: 0, EVENT_SELECT: 1, SCAN: 2, REVIEW: 3, PROCESSING: 4, DONE: 5 };
+const SCREENS = { LOGIN: 0, MEETING_LINK: 1, EVENT_SELECT: 2, SCAN: 3, REVIEW: 4, PROCESSING: 5, DONE: 6 };
 
 function App() {
   const [screen, setScreen] = useState(SCREENS.LOGIN);
@@ -28,6 +29,8 @@ function App() {
   const [scanHistory, setScanHistory] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [enrichStatus, setEnrichStatus] = useState(null);
+  const [leadType, setLeadType] = useState('');
+  const [warmth, setWarmth] = useState('');
 
   // Check auth on mount
   useEffect(() => {
@@ -41,8 +44,9 @@ function App() {
       return;
     }
 
-    // Clear auth=success from URL
-    if (params.get('auth') === 'success') {
+    // Clear auth=success from URL — this is a fresh login
+    const isFreshLogin = params.get('auth') === 'success';
+    if (isFreshLogin) {
       window.history.replaceState({}, '', '/');
     }
 
@@ -53,7 +57,10 @@ function App() {
       const savedHistory = store.loadScanHistory();
       setScanHistory(savedHistory);
 
-      if (savedEvent) {
+      if (isFreshLogin && !userData.meetingLink) {
+        // Fresh login with no meeting link — prompt for it
+        setScreen(SCREENS.MEETING_LINK);
+      } else if (savedEvent) {
         setSelectedEvent(savedEvent);
         setScreen(SCREENS.SCAN);
       } else {
@@ -78,6 +85,22 @@ function App() {
       setError(err.message);
     }
     setEventsLoading(false);
+  };
+
+  const handleSaveMeetingLink = async (link) => {
+    try {
+      await api.setMeetingLink(link);
+      setUser(prev => ({ ...prev, meetingLink: link }));
+    } catch (e) {
+      console.warn('Failed to save meeting link:', e.message);
+    }
+    setScreen(SCREENS.EVENT_SELECT);
+    loadEvents();
+  };
+
+  const handleSkipMeetingLink = () => {
+    setScreen(SCREENS.EVENT_SELECT);
+    loadEvents();
   };
 
   const handleSelectEvent = async (event) => {
@@ -170,6 +193,8 @@ function App() {
         company: ocrData.company,
         jobtitle: ocrData.jobtitle,
         notes,
+        leadType,
+        warmth,
       });
 
       // Step 3: Meeting link
@@ -204,6 +229,8 @@ function App() {
     setPhoto(null);
     setOcrData({ firstname: '', lastname: '', email: '', company: '', jobtitle: '' });
     setNotes('');
+    setLeadType('');
+    setWarmth('');
     setError(null);
     setResult(null);
     setEnrichStatus(null);
@@ -243,6 +270,11 @@ function App() {
     case SCREENS.LOGIN:
       return h(LoginScreen, { error });
 
+    case SCREENS.MEETING_LINK:
+      return h(MeetingLinkScreen, {
+        user, onSave: handleSaveMeetingLink, onSkip: handleSkipMeetingLink,
+      });
+
     case SCREENS.EVENT_SELECT:
       return h(EventSelectScreen, {
         user, events, loading: eventsLoading, error,
@@ -260,7 +292,7 @@ function App() {
       return h(ReviewScreen, {
         user, photo, ocrData, setOcrData, notes, setNotes,
         ocrLoading, error, onSubmit: handleSubmit, onRescan: resetForNextScan,
-        submitting, enrichStatus,
+        submitting, enrichStatus, leadType, setLeadType, warmth, setWarmth,
       });
 
     case SCREENS.PROCESSING:

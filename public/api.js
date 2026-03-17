@@ -35,6 +35,13 @@ export async function getEvents() {
   return apiCall('/api/events');
 }
 
+export async function setMeetingLink(meetingLink) {
+  return apiCall('/api/set-meeting-link', {
+    method: 'POST',
+    body: JSON.stringify({ meetingLink }),
+  });
+}
+
 export async function selectEvent(eventId, eventName, meetingLink) {
   return apiCall('/api/select-event', {
     method: 'POST',
@@ -56,10 +63,10 @@ export async function enrichContact({ firstname, lastname, company }) {
   });
 }
 
-export async function submitScan({ firstname, lastname, email, company, jobtitle, notes }) {
+export async function submitScan({ firstname, lastname, email, company, jobtitle, notes, leadType, warmth }) {
   return apiCall('/api/submit-scan', {
     method: 'POST',
-    body: JSON.stringify({ firstname, lastname, email, company, jobtitle, notes }),
+    body: JSON.stringify({ firstname, lastname, email, company, jobtitle, notes, leadType, warmth }),
   });
 }
 
