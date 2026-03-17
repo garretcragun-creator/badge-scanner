@@ -1,4 +1,6 @@
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  try { require('dotenv').config(); } catch (e) { /* dotenv optional locally */ }
+}
 const express = require('express');
 const path = require('path');
 const cookieParser = require('cookie-parser');
