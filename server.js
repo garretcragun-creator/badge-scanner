@@ -11,6 +11,10 @@ const { upsertContact, createNote } = require('./server/hubspot');
 const hapily = require('./server/hapily');
 
 const app = express();
+
+// Health check — must come before any middleware
+app.get('/health', (req, res) => res.json({ ok: true }));
+
 app.use(express.json({ limit: '10mb' })); // Large limit for base64 images
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
