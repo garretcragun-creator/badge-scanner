@@ -6,7 +6,7 @@ import { ScanHistoryItem } from '../components/ScanHistoryItem.js';
 
 const { createElement: h, useRef } = React;
 
-export function ScanScreen({ user, selectedEvent, scanHistory, error, onFileSelect, onManualEntry, onChangeEvent, onLogout }) {
+export function ScanScreen({ user, selectedEvent, scanHistory, error, onFileSelect, onManualEntry, onChangeEvent, onLogout, onSettings }) {
   const fileInputRef = useRef(null);
 
   const handleFile = (e) => {
@@ -128,9 +128,15 @@ export function ScanScreen({ user, selectedEvent, scanHistory, error, onFileSele
         ),
       ) : null,
 
-      // Logout
-      h('div', { style: { borderTop: '1px solid ' + c.cardBorder, paddingTop: 16 } },
-        h(SecondaryBtn, { onClick: onLogout, style: { width: '100%' } }, 'Logout'),
+      // Bottom actions
+      h('div', { style: { borderTop: '1px solid ' + c.cardBorder, paddingTop: 16, display: 'flex', gap: 10 } },
+        h(SecondaryBtn, { onClick: onSettings, style: { padding: '13px 14px' } },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+            h('circle', { cx: 12, cy: 12, r: 3 }),
+            h('path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z' }),
+          ),
+        ),
+        h(SecondaryBtn, { onClick: onLogout, style: { flex: 1 } }, 'Logout'),
       ),
 
       error ? h('div', { style: { marginTop: 12 } }, h(ErrorBanner, { error })) : null,

@@ -7,10 +7,40 @@ import { ScanScreen } from './screens/ScanScreen.js';
 import { ReviewScreen } from './screens/ReviewScreen.js';
 import { ProcessingScreen } from './screens/ProcessingScreen.js';
 import { DoneScreen } from './screens/DoneScreen.js';
+import { SettingsScreen } from './screens/SettingsScreen.js';
 
 const { createElement: h, useState, useEffect } = React;
 
-const SCREENS = { LOGIN: 0, MEETING_LINK: 1, EVENT_SELECT: 2, SCAN: 3, REVIEW: 4, PROCESSING: 5, DONE: 6 };
+const SCREENS = { LOGIN: 0, MEETING_LINK: 1, EVENT_SELECT: 2, SCAN: 3, REVIEW: 4, PROCESSING: 5, DONE: 6, SETTINGS: 7 };
+
+// Resize image to keep OCR payloads small and reliable
+function resizeImage(dataUrl, maxDim = 1600, quality = 0.8) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width <= maxDim && height <= maxDim) {
+        // Already small enough — just re-encode as JPEG to normalize format
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+        return;
+      }
+      const scale = maxDim / Math.max(width, height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl); // Fallback to original on error
+    img.src = dataUrl;
+  });
+}
 
 function App() {
   const [screen, setScreen] = useState(SCREENS.LOGIN);
@@ -57,9 +87,36 @@ function App() {
       const savedHistory = store.loadScanHistory();
       setScanHistory(savedHistory);
 
+      // Restore meeting link from localStorage if server doesn't have one
+      if (!userData.meetingLink && userData.email) {
+        const savedLink = store.loadMeetingLink(userData.email);
+        if (savedLink) {
+          // Silently restore to server session
+          api.setMeetingLink(savedLink).then(() => {
+            setUser(prev => ({ ...prev, meetingLink: savedLink }));
+          }).catch(() => {});
+        }
+      }
+
       if (isFreshLogin && !userData.meetingLink) {
-        // Fresh login with no meeting link — prompt for it
-        setScreen(SCREENS.MEETING_LINK);
+        // Check localStorage backup before prompting
+        const localLink = userData.email ? store.loadMeetingLink(userData.email) : '';
+        if (localLink) {
+          // Restore from localStorage, skip prompt
+          api.setMeetingLink(localLink).then(() => {
+            setUser(prev => ({ ...prev, meetingLink: localLink }));
+          }).catch(() => {});
+          if (savedEvent) {
+            setSelectedEvent(savedEvent);
+            setScreen(SCREENS.SCAN);
+          } else {
+            setScreen(SCREENS.EVENT_SELECT);
+            loadEvents();
+          }
+        } else {
+          // No saved link anywhere — prompt for it
+          setScreen(SCREENS.MEETING_LINK);
+        }
       } else if (savedEvent) {
         setSelectedEvent(savedEvent);
         setScreen(SCREENS.SCAN);
@@ -91,6 +148,10 @@ function App() {
     try {
       await api.setMeetingLink(link);
       setUser(prev => ({ ...prev, meetingLink: link }));
+      // Persist to localStorage as backup (keyed by user email)
+      if (user && user.email) {
+        store.saveMeetingLink(user.email, link);
+      }
     } catch (e) {
       console.warn('Failed to save meeting link:', e.message);
     }
@@ -117,14 +178,15 @@ function App() {
   };
 
   const handleFileSelect = async (imageDataUrl) => {
-    setPhoto(imageDataUrl);
     setScreen(SCREENS.REVIEW);
     setError(null);
     setOcrLoading(true);
     setEnrichStatus(null);
     try {
-      const base64 = imageDataUrl.split(',')[1];
-      const mediaType = (imageDataUrl.match(/data:(.*?);/) || [])[1] || 'image/jpeg';
+      const resized = await resizeImage(imageDataUrl);
+      setPhoto(resized);
+      const base64 = resized.split(',')[1];
+      const mediaType = 'image/jpeg'; // resizeImage always outputs JPEG
       const fields = await api.runOCR(base64, mediaType);
       const ocrResult = {
         firstname: fields.firstname || '',
@@ -244,6 +306,24 @@ function App() {
     loadEvents();
   };
 
+  const handleBackToScan = () => {
+    setError(null);
+    setScreen(SCREENS.SCAN);
+  };
+
+  const handleOpenSettings = () => {
+    setScreen(SCREENS.SETTINGS);
+  };
+
+  const handleBackFromSettings = () => {
+    // Go back to scan if event selected, otherwise event select
+    if (selectedEvent) {
+      setScreen(SCREENS.SCAN);
+    } else {
+      setScreen(SCREENS.EVENT_SELECT);
+    }
+  };
+
   const handleLogout = () => {
     api.logout();
   };
@@ -279,6 +359,7 @@ function App() {
       return h(EventSelectScreen, {
         user, events, loading: eventsLoading, error,
         onSelect: handleSelectEvent, onLogout: handleLogout,
+        onSettings: handleOpenSettings,
       });
 
     case SCREENS.SCAN:
@@ -286,12 +367,14 @@ function App() {
         user, selectedEvent, scanHistory, error,
         onFileSelect: handleFileSelect, onManualEntry: handleManualEntry,
         onChangeEvent: handleChangeEvent, onLogout: handleLogout,
+        onSettings: handleOpenSettings,
       });
 
     case SCREENS.REVIEW:
       return h(ReviewScreen, {
         user, photo, ocrData, setOcrData, notes, setNotes,
-        ocrLoading, error, onSubmit: handleSubmit, onRescan: resetForNextScan,
+        ocrLoading, error, onSubmit: handleSubmit, onBack: handleBackToScan,
+        onChangeEvent: handleChangeEvent, selectedEvent,
         submitting, enrichStatus, leadType, setLeadType, warmth, setWarmth,
       });
 
@@ -302,6 +385,23 @@ function App() {
       return h(DoneScreen, {
         user, ocrData, result, selectedEvent,
         onScanNext: resetForNextScan,
+      });
+
+    case SCREENS.SETTINGS:
+      return h(SettingsScreen, {
+        user, onBack: handleBackFromSettings,
+        onSaveMeetingLink: async (link) => {
+          try {
+            await api.setMeetingLink(link);
+            setUser(prev => ({ ...prev, meetingLink: link }));
+            if (user && user.email) {
+              store.saveMeetingLink(user.email, link);
+            }
+          } catch (e) {
+            console.warn('Failed to save meeting link:', e.message);
+          }
+        },
+        onLogout: handleLogout,
       });
 
     default:

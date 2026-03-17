@@ -26,7 +26,7 @@ router.post('/', requireAuth, async (req, res) => {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1024,
         messages: [{
           role: 'user',
@@ -41,7 +41,23 @@ router.post('/', requireAuth, async (req, res) => {
             },
             {
               type: 'text',
-              text: `Extract the following information from this conference badge or business card image. Return ONLY a JSON object with these fields:
+              text: `You are an expert OCR system for reading conference badges. Extract the ATTENDEE's contact information from this badge photo.
+
+BADGE LAYOUT (typical hierarchy):
+- ATTENDEE NAME: The largest, most prominent text. First and last name may be on separate lines.
+- COMPANY: Usually smaller text below or above the name. This is the attendee's employer.
+- JOB TITLE: Often near the company name, sometimes omitted entirely.
+- EMAIL: Rarely printed on conference badges. Only extract if you see an actual @ symbol on the badge.
+
+CRITICAL RULES:
+- NEVER guess or construct an email address. Only return an email if one is clearly printed on the badge. Most badges will not have one — leave it as "".
+- Distinguish the ATTENDEE's company from the EVENT/CONFERENCE name. The event name is often at the top or bottom of the badge in branding (e.g., "SaaStr Annual", "Dreamforce", "HIMSS"). Do NOT put the event name as the company.
+- If a lanyard, glare, finger, or plastic holder obscures text, extract what you can see and leave unclear fields as "".
+- For names, use title case (e.g., "John Smith" not "JOHN SMITH").
+- For company names, use standard capitalization (e.g., "Acme Corp" not "ACME CORP"), unless it's a known acronym/brand (e.g., "IBM", "AWS").
+- For email, always lowercase.
+
+Return ONLY a JSON object with exactly these fields:
 {
   "firstname": "",
   "lastname": "",
@@ -50,7 +66,7 @@ router.post('/', requireAuth, async (req, res) => {
   "jobtitle": ""
 }
 
-If a field cannot be determined, leave it as an empty string. Do not include any other text, markdown formatting, or explanation — just the JSON object.`,
+Leave any field as "" if not visible on the badge. No other text, markdown, or explanation — just the JSON.`,
             },
           ],
         }],
@@ -60,7 +76,12 @@ If a field cannot be determined, leave it as an empty string. Do not include any
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Anthropic API error:', response.status, errorText);
-      return res.status(502).json({ error: 'OCR service error', code: 'OCR_API_ERROR' });
+      let userMessage = 'OCR service error';
+      if (response.status === 401) userMessage = 'OCR API key is invalid or expired.';
+      else if (response.status === 413) userMessage = 'Image is too large for OCR. Try a smaller image.';
+      else if (response.status === 429) userMessage = 'OCR rate limit reached. Please wait a moment and try again.';
+      else if (response.status === 529) userMessage = 'OCR service is temporarily overloaded. Please try again.';
+      return res.status(502).json({ error: userMessage, code: 'OCR_API_ERROR' });
     }
 
     const data = await response.json();

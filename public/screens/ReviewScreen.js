@@ -1,10 +1,11 @@
 import { c, font, fontDisplay, wrapper, cardStyle } from '../styles.js';
 import { LogoHeader } from '../components/Logo.js';
 import { PrimaryBtn, SecondaryBtn } from '../components/Buttons.js';
+import { BackButton } from '../components/BackButton.js';
 import { Field } from '../components/Field.js';
 import { ErrorBanner } from '../components/ErrorBanner.js';
 import { LoadingSpinner } from '../components/LoadingSpinner.js';
-const { createElement: h, useRef, useState } = React;
+const { createElement: h, useRef, useState, useEffect, useCallback } = React;
 
 const LEAD_TYPE_OPTIONS = [
   { value: 'Prospect', label: 'Prospect' },
@@ -20,7 +21,7 @@ const WARMTH_OPTIONS = [
   { value: 'Cold', label: 'Cold' },
 ];
 
-export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes, ocrLoading, error, onSubmit, onRescan, submitting, enrichStatus, leadType, setLeadType, warmth, setWarmth }) {
+export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes, ocrLoading, error, onSubmit, onBack, onChangeEvent, selectedEvent, submitting, enrichStatus, leadType, setLeadType, warmth, setWarmth }) {
   const recognitionRef = useRef(null);
   const preRecordingNotesRef = useRef('');
   const [isListening, setIsListening] = useState(false);
@@ -28,13 +29,33 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
 
   const hasSpeechAPI = typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
 
+  // Cleanup voice recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopListening = useCallback(() => {
+    const ref = recognitionRef.current;
+    if (ref) {
+      try { ref.stop(); } catch (e) { /* ignore */ }
+      // Force-abort if stop doesn't fire onend within 2s
+      setTimeout(() => {
+        try { ref.abort(); } catch (e) { /* ignore */ }
+      }, 2000);
+    }
+    recognitionRef.current = null;
+    setIsListening(false);
+  }, []);
+
   const toggleVoice = () => {
     if (!hasSpeechAPI) return;
     if (isListening) {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) { /* ignore */ }
-      }
-      setIsListening(false);
+      stopListening();
       return;
     }
 
@@ -44,13 +65,12 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SR();
     recognition.continuous = true;
-    recognition.interimResults = false; // Only final results — prevents duplication and UI lag
+    recognition.interimResults = false; // Only final results — prevents duplication
     recognition.lang = 'en-US';
 
     let finalTranscript = '';
 
     recognition.onresult = (e) => {
-      // Only process new results (from resultIndex onward)
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) {
           finalTranscript += e.results[i][0].transcript;
@@ -63,11 +83,24 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
     recognition.onerror = (e) => {
       console.warn('Speech recognition error:', e.error);
       setIsListening(false);
+      recognitionRef.current = null;
     };
-    recognition.onend = () => setIsListening(false);
+
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+
     recognitionRef.current = recognition;
-    recognition.start();
-    setIsListening(true);
+
+    try {
+      recognition.start();
+      setIsListening(true);
+    } catch (e) {
+      console.warn('Speech recognition start failed:', e);
+      setIsListening(false);
+      recognitionRef.current = null;
+    }
   };
 
   const updateField = (field) => (value) => {
@@ -77,6 +110,33 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
   return h('div', { style: wrapper },
     h('div', { style: Object.assign({}, cardStyle, { maxWidth: 480 }) },
       h(LogoHeader, { user }),
+
+      // Back button
+      h(BackButton, { onClick: onBack, label: 'Back to Scanner' }),
+
+      // Selected event indicator with change option
+      selectedEvent ? h('div', {
+        style: {
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: c.primarySoft, border: '1px solid rgba(251,191,36,0.1)',
+          borderRadius: 14, padding: '10px 16px', marginBottom: 20,
+        },
+      },
+        h('div', {
+          style: { fontSize: 12, color: c.textSecondary },
+        },
+          h('span', { style: { color: c.textMuted, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1.5 } }, 'Event: '),
+          h('span', { style: { fontWeight: 700, color: c.primary, fontFamily: fontDisplay } }, selectedEvent.name),
+        ),
+        onChangeEvent ? h('button', {
+          onClick: onChangeEvent,
+          style: {
+            background: 'rgba(255,255,255,0.06)', border: '1px solid ' + c.cardBorder,
+            color: c.textSecondary, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            fontFamily: font, borderRadius: 8, padding: '5px 10px', transition: 'all 0.2s',
+          },
+        }, 'Change') : null,
+      ) : null,
 
       // Photo thumbnail with gradient overlay
       photo ? h('div', {
@@ -116,10 +176,10 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
         : h('div', { style: { animation: 'fadeInUp 0.4s ease both 0.15s' } },
             // Name fields (side by side)
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' } },
-              h(Field, { label: 'First Name', value: ocrData.firstname, onChange: updateField('firstname'), placeholder: 'Jane' }),
-              h(Field, { label: 'Last Name', value: ocrData.lastname, onChange: updateField('lastname'), placeholder: 'Doe' }),
+              h(Field, { key: 'fn', label: 'First Name', value: ocrData.firstname, onChange: updateField('firstname'), placeholder: 'Jane' }),
+              h(Field, { key: 'ln', label: 'Last Name', value: ocrData.lastname, onChange: updateField('lastname'), placeholder: 'Doe' }),
             ),
-            h(Field, { label: 'Email', value: ocrData.email, onChange: updateField('email'), placeholder: 'jane@company.com', mono: true }),
+            h(Field, { key: 'em', label: 'Email', value: ocrData.email, onChange: updateField('email'), placeholder: 'jane@company.com', mono: true }),
 
             // Apollo enrichment status
             enrichStatus ? h('div', {
@@ -134,16 +194,18 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
               : enrichStatus === 'not_found' ? 'No email found in Apollo'
               : null,
             ) : null,
-            h(Field, { label: 'Company', value: ocrData.company, onChange: updateField('company'), placeholder: 'Acme Inc' }),
-            h(Field, { label: 'Job Title', value: ocrData.jobtitle, onChange: updateField('jobtitle'), placeholder: 'VP of Marketing' }),
+            h(Field, { key: 'co', label: 'Company', value: ocrData.company, onChange: updateField('company'), placeholder: 'Acme Inc' }),
+            h(Field, { key: 'jt', label: 'Job Title', value: ocrData.jobtitle, onChange: updateField('jobtitle'), placeholder: 'VP of Marketing' }),
 
             // Lead qualification (side by side)
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' } },
               h(Field, {
+                key: 'lt',
                 label: 'Lead Type', value: leadType, onChange: setLeadType,
                 options: LEAD_TYPE_OPTIONS, placeholder: 'Select type...',
               }),
               h(Field, {
+                key: 'wm',
                 label: 'Warmth', value: warmth, onChange: setWarmth,
                 options: WARMTH_OPTIONS, placeholder: 'Select warmth...',
               }),
@@ -160,6 +222,7 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
                 }, 'Notes'),
                 hasSpeechAPI ? h('button', {
                   onClick: toggleVoice,
+                  type: 'button',
                   style: {
                     background: isListening ? c.dangerBg : 'rgba(255,255,255,0.04)',
                     color: isListening ? c.danger : c.textMuted,
@@ -205,7 +268,7 @@ export function ReviewScreen({ user, photo, ocrData, setOcrData, notes, setNotes
                 disabled: (!ocrData.email && !ocrData.firstname) || submitting,
                 style: { flex: 1 },
               }, submitting ? 'Saving...' : 'Save Contact'),
-              h(SecondaryBtn, { onClick: onRescan }, 'Rescan'),
+              h(SecondaryBtn, { onClick: onBack }, 'Cancel'),
             ),
           ),
     ),
