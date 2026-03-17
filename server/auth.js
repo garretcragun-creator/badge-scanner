@@ -15,7 +15,6 @@ const OAUTH_SCOPES = [
   'crm.schemas.companies.read',
   'crm.schemas.companies.write',
   'crm.schemas.custom.read',
-  'scheduler.meeting-links.read',
   'oauth',
 ].join(' ');
 
@@ -83,23 +82,31 @@ router.get('/callback', async (req, res) => {
     let meetingLink = '';
     if (ownerId) {
       try {
+        // Try the scheduling pages API
         const meetingsRes = await fetch(
           'https://api.hubapi.com/scheduler/v3/meetings/meeting-links?' + new URLSearchParams({ ownerId, count: 1 }),
           { headers: { Authorization: `Bearer ${tokens.access_token}` } }
         );
         if (meetingsRes.ok) {
           const meetingsData = await meetingsRes.json();
+          console.log('Meeting links response:', JSON.stringify(meetingsData).slice(0, 500));
           const links = meetingsData.results || meetingsData;
           if (Array.isArray(links) && links.length > 0) {
-            meetingLink = links[0].link || links[0].slug
-              ? `https://meetings.hubspot.com/${links[0].slug}`
-              : '';
+            const first = links[0];
+            meetingLink = first.link || first.url || '';
+            if (!meetingLink && first.slug) {
+              meetingLink = `https://meetings.hubspot.com/${first.slug}`;
+            }
           }
+        } else {
+          const errBody = await meetingsRes.text();
+          console.warn('Meeting links API returned', meetingsRes.status, errBody.slice(0, 300));
         }
       } catch (e) {
         console.warn('Could not fetch meeting links:', e.message);
       }
     }
+    console.log('User meeting link:', meetingLink || '(none - will use MEETING_LINK env var)');
 
     // Create server-side session (tokens never sent to client)
     const sessionId = createSession({
